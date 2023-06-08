@@ -8,7 +8,7 @@ from PIL import Image
 
 import tensorflow as tf
 from tensorflow.keras.models import Model , load_model
-from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Dropout, UpSampling2D, concatenate
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Dropout, UpSampling2D, concatenate,BatchNormalization
 import cv2
 import matplotlib.pyplot as plt
 import sys
@@ -25,6 +25,7 @@ def read_image(file_path, isn = False):
     #plt.imshow(image)
     #plt.show()
     image_array = np.array(image)
+    image_array = image_array/255
     return image_array
 
 def load_data(file_list, test_ratio=0.2):
@@ -65,23 +66,31 @@ def create_model(input_shape):
 
     # Część kodująca
     conv1 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(inputs)
+    conv1 = BatchNormalization()(conv1)
     conv1 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(conv1)
+    conv1 = BatchNormalization()(conv1)
     pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
 
     conv2 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(pool1)
+    conv2 = BatchNormalization()(conv2)
     conv2 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(conv2)
+    conv2 = BatchNormalization()(conv2)
     pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
 
     # Część dekodująca
     up2 = UpSampling2D(size=(2, 2))(pool2)
     merge2 = concatenate([conv2, up2])
     conv3 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(merge2)
+    conv3 = BatchNormalization()(conv3)
     conv3 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(conv3)
+    conv3 = BatchNormalization()(conv3)
 
     up1 = UpSampling2D(size=(2, 2))(conv3)
     merge1 = concatenate([conv1, up1])
     conv4 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(merge1)
+    conv4 = BatchNormalization()(conv4)
     conv4 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(conv4)
+    conv4 = BatchNormalization()(conv4)
 
     # Warstwa wyjściowa
     outputs = Conv2D(1, (1, 1), activation='sigmoid')(conv4)
@@ -96,6 +105,7 @@ def predict_from_model(path,model,lev):
     prediction = model.predict(image)
     prediction = np.squeeze(prediction, axis=0)
     binary_mask = (prediction > lev).astype(np.uint8)
+    binary_mask = binary_mask*255
     plt.imshow(binary_mask, cmap='gray')
     plt.show()
 
@@ -110,7 +120,7 @@ if sys.argv[1] == '1':
     # Wczytanie danych
     X_test, Y_test, X_train, Y_train = load_data(file_list)
     model = create_model((256, 256, 3))
-    history = model.fit(X_train, Y_train, validation_data=(X_test, Y_test), batch_size=500, epochs=10)
+    history = model.fit(X_train, Y_train, validation_data=(X_test, Y_test), batch_size=1000, epochs=10)
     model.save('model.h5')
     loss, accuracy = model.evaluate(X_test, Y_test)
 
@@ -126,9 +136,9 @@ else:
     model = tf.keras.models.load_model("model.h5")
 
 
-#predict_from_model("test_2.jpg",model,0.4)
-#for i in range(1,10):
-predict_from_model("test.jpg",model,0.5)
+#predict_from_model("Images\Image_01L.jpg",model,0.4)
+for i in range(1,10):
+    predict_from_model("test.jpg",model,i/10)
 #print(X_train.shape)
 
 #image = Image.fromarray(X_test[1])
