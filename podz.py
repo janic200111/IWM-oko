@@ -9,9 +9,13 @@ from PIL import Image
 import tensorflow as tf
 from tensorflow.keras.models import Model , load_model
 from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Dropout, UpSampling2D, concatenate,BatchNormalization
+from sklearn.model_selection import train_test_split
 import cv2
 import matplotlib.pyplot as plt
 import sys
+
+epochs = 10
+val_ratio = 0.1
 
 def read_image(file_path, isn = False):
     image = Image.open(file_path)
@@ -28,9 +32,14 @@ def read_image(file_path, isn = False):
     image_array = image_array/255
     return image_array
 
-def load_data(file_list, test_ratio=0.2):
+from sklearn.model_selection import train_test_split
+
+# ...
+
+def load_data(file_list, test_ratio=0.2, val_ratio=0.1):
     random.shuffle(file_list)
     num_test = int(len(file_list) * test_ratio)
+    num_val = int(len(file_list) * val_ratio)
 
     X_test = []
     Y_test = []
@@ -39,57 +48,58 @@ def load_data(file_list, test_ratio=0.2):
 
     for i, file_name in enumerate(file_list):
         file_path = os.path.join('Images/', file_name)
-        image_array_X = read_image(file_path)
-        #plt.imshow(image_array_X)
-        #plt.show()
-        index = file_path.index('.')
-        image_array_Y =read_image(file_path[:index] + sufix)
-        #plt.imshow(image_array_Y)
-        #plt.show()
-        if i < num_test:
-            X_test.append(image_array_X)
-            Y_test.append(image_array_Y)
-        else:
-            X_train.append(image_array_X)
-            Y_train.append(image_array_Y)
+        for angle in range(2):
+            image_array_X = read_image(file_path, angle * 90)
+            index = file_path.index('.')
+            image_array_Y = read_image(file_path[:index] + sufix, angle * 90)
+            if i < num_test:
+                X_test.append(image_array_X)
+                Y_test.append(image_array_Y)
+            else:
+                X_train.append(image_array_X)
+                Y_train.append(image_array_Y)
 
-    # Konwersja list na tablice numpy
+    X_train, X_val, Y_train, Y_val = train_test_split(X_train, Y_train, test_size=val_ratio, random_state=42)
+
     X_test = np.array(X_test)
     Y_test = np.array(Y_test)
     X_train = np.array(X_train)
     Y_train = np.array(Y_train)
+    X_val = np.array(X_val)
+    Y_val = np.array(Y_val)
 
-    return X_test, Y_test, X_train, Y_train
+    return X_test, Y_test, X_train, Y_train, X_val, Y_val
+
 
 def create_model(input_shape):
     inputs = Input(input_shape)
 
     # Część kodująca
-    conv1 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(inputs)
+    conv1 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(inputs)
     conv1 = BatchNormalization()(conv1)
-    conv1 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(conv1)
+    conv1 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(conv1)
     conv1 = BatchNormalization()(conv1)
     pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
 
-    conv2 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(pool1)
+    conv2 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(pool1)
     conv2 = BatchNormalization()(conv2)
-    conv2 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(conv2)
+    conv2 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(conv2)
     conv2 = BatchNormalization()(conv2)
     pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
 
     # Część dekodująca
     up2 = UpSampling2D(size=(2, 2))(pool2)
     merge2 = concatenate([conv2, up2])
-    conv3 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(merge2)
+    conv3 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(merge2)
     conv3 = BatchNormalization()(conv3)
-    conv3 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(conv3)
+    conv3 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(conv3)
     conv3 = BatchNormalization()(conv3)
 
     up1 = UpSampling2D(size=(2, 2))(conv3)
     merge1 = concatenate([conv1, up1])
-    conv4 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(merge1)
+    conv4 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(merge1)
     conv4 = BatchNormalization()(conv4)
-    conv4 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(conv4)
+    conv4 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(conv4)
     conv4 = BatchNormalization()(conv4)
 
     # Warstwa wyjściowa
@@ -99,6 +109,7 @@ def create_model(input_shape):
 
     model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
     return model
+
 def predict_from_model(path,model,lev):
     image = read_image(path)
     image = np.expand_dims(image, axis=0)
@@ -118,19 +129,19 @@ if sys.argv[1] == '1':
              'Image_12R.jpg','Image_13R.jpg','Image_14R.jpg','Image_14L.jpg']
 
     # Wczytanie danych
-    X_test, Y_test, X_train, Y_train = load_data(file_list)
+    X_test, Y_test, X_train, Y_train, X_val, Y_val = load_data(file_list, val_ratio=val_ratio)
     model = create_model((256, 256, 3))
-    history = model.fit(X_train, Y_train, validation_data=(X_test, Y_test), batch_size=1000, epochs=10)
+    history = model.fit(X_train, Y_train, validation_data=(X_val, Y_val), batch_size=1000, epochs=epochs)
     model.save('model.h5')
-    loss, accuracy = model.evaluate(X_test, Y_test)
 
+    # Wykresy funkcji straty
     plt.figure(figsize=(10, 5))
     plt.plot(history.history['loss'])
     plt.plot(history.history['val_loss'])
     plt.title('Model loss')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
-    plt.legend(['Train', 'Test'], loc='upper right')
+    plt.legend(['Train', 'Validation'], loc='upper right')
     plt.show()
 else:
     model = tf.keras.models.load_model("model.h5")
