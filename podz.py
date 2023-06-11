@@ -16,7 +16,7 @@ import cv2
 import matplotlib.pyplot as plt
 import sys
 
-epochs = 100
+epochs = 20
 PART_SIZE=256
 lr =0.001
 
@@ -119,8 +119,13 @@ def create_model(input_shape):
     pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
     pool3 = Dropout(0.5)(pool3)
 
+    center = Conv2D(512, (3, 3), activation=sactivation, padding='same')(pool3)
+    center = BatchNormalization()(center)
+    center = Conv2D(512, (3, 3), activation=sactivation, padding='same')(center)
+    center = BatchNormalization()(center)
+
     # Decoding part
-    up3 = UpSampling2D(size=(2, 2))(pool3)
+    up3 = UpSampling2D(size=(2, 2))(center)
     merge3 = concatenate([conv3, up3])
     conv4 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(merge3)
     conv4 = BatchNormalization()(conv4)
