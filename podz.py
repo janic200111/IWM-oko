@@ -34,12 +34,15 @@ def iou(y_true, y_pred):
     iou_score = intersection / union
     return iou_score
 
-def read_image(file_path, rotation=0):
+def read_image(file_path, rotation=0, is_mask=False):
     image = Image.open(file_path)
     image = image.resize((256, 256))
     image = image.rotate(rotation)
     image_array = np.array(image)
-    image_array = image_array/255
+    if is_mask:  # If the image is a mask
+        image_array = (image_array > 0).astype(np.float32)
+    else:  # If the image is not a mask
+        image_array = image_array/255
     return image_array
 
 def load_data(file_list, test_ratio=0.3, patch_size=(PART_SIZE, PART_SIZE)):
@@ -56,7 +59,7 @@ def load_data(file_list, test_ratio=0.3, patch_size=(PART_SIZE, PART_SIZE)):
         for angle in range(1):
             image_array_X = read_image(file_path, angle * 90)
             index = file_path.index('.')
-            image_array_Y = read_image(file_path[:index] + sufix, angle * 90)
+            image_array_Y = read_image(file_path[:index] + sufix, angle * 90,1)
             
             # Podział obrazów na fragmenty
             for x in range(0, image_array_X.shape[0]-patch_size[0]+1, patch_size[0]):
