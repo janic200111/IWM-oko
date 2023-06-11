@@ -9,30 +9,40 @@ from PIL import Image
 import tensorflow as tf
 from tensorflow.keras.models import Model , load_model
 from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Dropout, UpSampling2D, concatenate, BatchNormalization
-from tensorflow.keras.metrics import Precision
+from tensorflow.keras.metrics import Recall, Precision
+from tensorflow.keras.optimizers import Adam
 
 import cv2
 import matplotlib.pyplot as plt
 import sys
 
-epochs = 3
-PART_SIZE=8
+epochs = 100
+PART_SIZE=256
+lr =0.001
+
+def dice_loss(y_true, y_pred):
+    smooth = 1e-5
+    intersection = tf.reduce_sum(y_true * y_pred)
+    union = tf.reduce_sum(y_true) + tf.reduce_sum(y_pred)
+    dice_score = (2.0 * intersection + smooth) / (union + smooth)
+    dice_loss = 1.0 - dice_score
+    return dice_loss
+
+def iou(y_true, y_pred):
+    intersection = tf.reduce_sum(y_true * y_pred)
+    union = tf.reduce_sum(y_true) + tf.reduce_sum(y_pred) - intersection
+    iou_score = intersection / union
+    return iou_score
 
 def read_image(file_path, rotation=0):
     image = Image.open(file_path)
-    # Przykładowe przetwarzanie obrazu, jeśli jest to wymagane
-    # Przykład: przeskalowanie obrazu do rozmiaru 224x224
     image = image.resize((256, 256))
-    #image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # Przetwarzanie obrazu do postaci tablicy numpy
     image = image.rotate(rotation)
-    #plt.imshow(image)
-    #plt.show()
     image_array = np.array(image)
     image_array = image_array/255
     return image_array
 
-def load_data(file_list, test_ratio=0.2, patch_size=(64, 64)):
+def load_data(file_list, test_ratio=0.3, patch_size=(PART_SIZE, PART_SIZE)):
     random.shuffle(file_list)
     num_test = int(len(file_list) * test_ratio)
 
@@ -43,7 +53,7 @@ def load_data(file_list, test_ratio=0.2, patch_size=(64, 64)):
 
     for i, file_name in enumerate(file_list):
         file_path = os.path.join('Images/', file_name)
-        for angle in range(2):
+        for angle in range(1):
             image_array_X = read_image(file_path, angle * 90)
             index = file_path.index('.')
             image_array_Y = read_image(file_path[:index] + sufix, angle * 90)
@@ -68,48 +78,80 @@ def load_data(file_list, test_ratio=0.2, patch_size=(64, 64)):
     return X_test, Y_test, X_train, Y_train
 
 
+from tensorflow.keras import backend as K
+
+def dice_coef(y_true, y_pred, smooth=1):
+    intersection = K.sum(y_true * y_pred, axis=[1,2])
+    union = K.sum(y_true, axis=[1,2]) + K.sum(y_pred, axis=[1,2])
+    return K.mean( (2. * intersection + smooth) / (union + smooth), axis=0)
+
+def dice_coef_loss(y_true, y_pred):
+    return 1-dice_coef(y_true, y_pred)
+
+class ClippedMeanIoU(tf.keras.metrics.MeanIoU):
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_pred = tf.round(y_pred)
+        y_pred = tf.clip_by_value(y_pred, 0, 1)  # Ensure values are between 0 and 1
+        return super().update_state(y_true, y_pred, sample_weight)
+
 def create_model(input_shape):
     inputs = Input(input_shape)
-    sactivation = 'relu' # define the activation function
 
     # Encoding part
-    conv1 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(inputs)
+    conv1 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(inputs)
     conv1 = BatchNormalization()(conv1)
-    conv1 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(conv1)
+    conv1 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(conv1)
     conv1 = BatchNormalization()(conv1)
     pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
-    pool1 = Dropout(0.5)(pool1) # Dropout layer
+    pool1 = Dropout(0.5)(pool1)
 
-    conv2 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(pool1)
+    conv2 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(pool1)
     conv2 = BatchNormalization()(conv2)
-    conv2 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(conv2)
+    conv2 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(conv2)
     conv2 = BatchNormalization()(conv2)
     pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
-    pool2 = Dropout(0.5)(pool2) # Dropout layer
+    pool2 = Dropout(0.5)(pool2)
 
-    # Decoding part
-    up2 = UpSampling2D(size=(2, 2))(pool2)
-    merge2 = concatenate([conv2, up2])
-    conv3 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(merge2)
+    conv3 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(pool2)
     conv3 = BatchNormalization()(conv3)
     conv3 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(conv3)
     conv3 = BatchNormalization()(conv3)
+    pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
+    pool3 = Dropout(0.5)(pool3)
 
-    up1 = UpSampling2D(size=(2, 2))(conv3)
+    # Decoding part
+    up3 = UpSampling2D(size=(2, 2))(pool3)
+    merge3 = concatenate([conv3, up3])
+    conv4 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(merge3)
+    conv4 = BatchNormalization()(conv4)
+    conv4 = Conv2D(256, (3, 3), activation=sactivation, padding='same')(conv4)
+    conv4 = BatchNormalization()(conv4)
+
+    up2 = UpSampling2D(size=(2, 2))(conv4)
+    merge2 = concatenate([conv2, up2])
+    conv5 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(merge2)
+    conv5 = BatchNormalization()(conv5)
+    conv5 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(conv5)
+    conv5 = BatchNormalization()(conv5)
+
+    up1 = UpSampling2D(size=(2, 2))(conv5)
     merge1 = concatenate([conv1, up1])
-    conv4 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(merge1)
-    conv4 = BatchNormalization()(conv4)
-    conv4 = Conv2D(128, (3, 3), activation=sactivation, padding='same')(conv4)
-    conv4 = BatchNormalization()(conv4)
+    conv6 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(merge1)
+    conv6 = BatchNormalization()(conv6)
+    conv6 = Conv2D(64, (3, 3), activation=sactivation, padding='same')(conv6)
+    conv6 = BatchNormalization()(conv6)
 
     # Output layer
-    outputs = Conv2D(1, (1, 1), activation='sigmoid')(conv4)
+    outputs = Conv2D(1, (1, 1), activation=sactivation)(conv6)
 
     model = Model(inputs=[inputs], outputs=[outputs])
 
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', Precision()])
-   
+    model.compile(loss=dice_loss, optimizer=Adam(lr), metrics=[dice_coef, iou, Recall(), Precision()])
+
     return model
+
+
+
 
 def predict_from_model(path, model, lev):
     image = read_image(path)
